@@ -6,9 +6,54 @@ title: Change Log
 
 ### Core
 
+- Add function to know last reset resaon.
+- Allow control of enabling debug and debug level from IDE
+- Make HardwareSerial::begin() and end() interrupt safe
+- Put HardwareSerial and cbuf methods called from interrupt context in RAM
+- Re-enable interrupts before directly enqueuing characters in the UART FIFO
+- Add espduino board
+- Rework StreamString::write to use String internal buffer directly (#1289)
+- Add function to measure stack high water mark
+- Fix RAM corruption caused by our hook of register_chipv6_phy(init_data*).
+- Optimize PWM interrupt handler for better precision
+- Add warning levels configurable through Preferences
+- Protect HardwareSerial's cbuf usage with InterruptLock
+- SPIFFS: check if path length is valid (#1089)
+- Set CPU frequency before running setup
+- Add core_esp8266_features.h to be able to detect the features and libraries included in the ESP core
+- Added ESPino to supported boards
+- Fix pwm first step getting skipped
+- Update SDK to 1.5.1_16_01_08
+- HardwareSerial: allow mapping of UART0 TX to GPIO2
+
 ### Libraries
 
+- ESP8266HTTPClient: add CHUNKED encoding support (#1324)
+- Fixed crash bug with mDNS where a string buffer could be used uninitialized
+- Add WiFi TX power control
+- Add WiFi sleep management
+- Allow to hook into WiFi events from sketch
+- Allow setting TCP timeout
+- Add setSleepMode + getSleepMode and setPhyMode + getPhyMode to WiFi
+- Update GDBStub library with the source of esp-gdbstub
+- Servo: fix detach and attach
+- ESP8266mDNS: refactoring, add TXT support
+- Add HTTP Basic Auth to WebServer and libb64 (base64) to core
+- Fix link-time dependency of ESP8266WebServer on SPIFFS (#862)
+- Allow setting client side TLS key and certificate
+- Replace chain of UDP pbufs with a single pbuf before sending (#1009)
+- Unique Built-In libraries library.properties name
+- Improvements for MD5Builder with Stream
+- ESP8266SSDP: fixing TTL to 2 per spec
+- ESP8266WebServer: a content length of zero should also be sent
+- Use SoftwareSerial version 2.2
+- EEPROM: optimised `_dirty` flag
+- ESP8266mDNS: advertise all hosted services
+- Remove bundled OneWire - ESP8266 support has been merged in the official OneWire sources
+
 ### Tools
+
+- espota.py: add support for manually selecting ip and port for host side
 
 ---
 ## 2.0.0

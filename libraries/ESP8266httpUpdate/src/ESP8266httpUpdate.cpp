@@ -124,6 +124,12 @@ String ESP8266HTTPUpdate::getLastErrorString(void) {
             return String("Forbidden (403)");
         case HTTP_UE_SERVER_WRONG_HTTP_CODE:
             return String("Wrong HTTP code");
+        case HTTP_UE_SERVER_FAULTY_MD5:
+            return String("Faulty MD5");
+        case HTTP_UE_BIN_VERIFY_HEADER_FAILED:
+            return String("Verify bin header failed");
+        case HTTP_UE_BIN_FOR_WRONG_FLASH:
+            return String("bin for wrong flash size");
     }
 
     return String();
@@ -140,6 +146,9 @@ t_httpUpdate_return ESP8266HTTPUpdate::handleUpdate(HTTPClient * http, const cha
 
     t_httpUpdate_return ret = HTTP_UPDATE_FAILED;
 
+    // use HTTP/1.0 for update since the update handler not support any transfer Encoding
+    http->useHTTP10(true);
+    http->setTimeout(8000);
     http->setUserAgent("ESP8266-http-Update");
     http->addHeader("x-ESP8266-STA-MAC", WiFi.macAddress());
     http->addHeader("x-ESP8266-AP-MAC", WiFi.softAPmacAddress());
@@ -232,6 +241,35 @@ t_httpUpdate_return ESP8266HTTPUpdate::handleUpdate(HTTPClient * http, const cha
                         DEBUG_HTTP_UPDATE("[httpUpdate] runUpdate flash...\n");
                     }
 
+                    if(!spiffs) {
+                        uint8_t buf[4];
+                        if(tcp->peekBytes(&buf[0], 4) != 4) {
+                            DEBUG_HTTP_UPDATE("[httpUpdate] peekBytes magic header failed\n");
+                            lastError = HTTP_UE_BIN_VERIFY_HEADER_FAILED;
+                            http->end();
+                            return HTTP_UPDATE_FAILED;
+                        }
+
+                        // check for valid first magic byte
+                        if(buf[0] != 0xE9) {
+                            DEBUG_HTTP_UPDATE("[httpUpdate] magic header not starts with 0xE9\n");
+                            lastError = HTTP_UE_BIN_VERIFY_HEADER_FAILED;
+                            http->end();
+                            return HTTP_UPDATE_FAILED;
+
+                        }
+
+                        uint32_t bin_flash_size = ESP.magicFlashChipSize((buf[3] & 0xf0) >> 4);
+
+                        // check if new bin fits to SPI flash
+                        if(bin_flash_size > ESP.getFlashChipRealSize()) {
+                            DEBUG_HTTP_UPDATE("[httpUpdate] magic header, new bin not fits SPI Flash\n");
+                            lastError = HTTP_UE_BIN_FOR_WRONG_FLASH;
+                            http->end();
+                            return HTTP_UPDATE_FAILED;
+                        }
+                    }
+
                     if(runUpdate(*tcp, len, http->header("x-MD5"), command)) {
                         ret = HTTP_UPDATE_OK;
                         DEBUG_HTTP_UPDATE("[httpUpdate] Update ok\n");
@@ -296,7 +334,11 @@ bool ESP8266HTTPUpdate::runUpdate(Stream& in, uint32_t size, String md5, int com
     }
 
     if(md5.length()) {
-        Update.setMD5(md5.c_str());
+        if(!Update.setMD5(md5.c_str())) {
+            lastError = HTTP_UE_SERVER_FAULTY_MD5;
+            DEBUG_HTTP_UPDATE("[httpUpdate] Update.setMD5 failed! (%s)\n", md5.c_str());
+            return false;
+        }
     }
 
     if(Update.writeStream(in) != size) {

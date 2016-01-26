@@ -28,8 +28,13 @@
 #include "ESP8266WebServer.h"
 #include "FS.h"
 #include "detail/RequestHandlersImpl.h"
-// #define DEBUG
+
+//#define DEBUG_ESP_HTTP_SERVER
+#ifdef DEBUG_ESP_PORT
+#define DEBUG_OUTPUT DEBUG_ESP_PORT
+#else
 #define DEBUG_OUTPUT Serial
+#endif
 
 const char * AUTHORIZATION_HEADER = "Authorization";
 
@@ -75,6 +80,7 @@ ESP8266WebServer::~ESP8266WebServer() {
 }
 
 void ESP8266WebServer::begin() {
+  _currentStatus = HC_NONE;
   _server.begin();
   if(!_headerKeysCount)
     collectHeaders(0, 0);
@@ -150,28 +156,67 @@ void ESP8266WebServer::serveStatic(const char* uri, FS& fs, const char* path, co
 }
 
 void ESP8266WebServer::handleClient() {
-  WiFiClient client = _server.available();
-  if (!client) {
-    return;
-  }
+  if (_currentStatus == HC_NONE) {
+    WiFiClient client = _server.available();
+    if (!client) {
+      return;
+    }
 
-#ifdef DEBUG
-  DEBUG_OUTPUT.println("New client");
+#ifdef DEBUG_ESP_HTTP_SERVER
+    DEBUG_OUTPUT.println("New client");
 #endif
 
-  // Wait for data from client to become available
-  uint16_t maxWait = HTTP_MAX_DATA_WAIT;
-  while(client.connected() && !client.available() && maxWait--){
-    delay(1);
+    _currentClient = client;
+    _currentStatus = HC_WAIT_READ;
+    _statusChange = millis();
   }
 
-  if (!_parseRequest(client)) {
+  if (!_currentClient.connected()) {
+    _currentClient = WiFiClient();
+    _currentStatus = HC_NONE;
     return;
   }
 
-  _currentClient = client;
-  _contentLength = CONTENT_LENGTH_NOT_SET;
-  _handleRequest();
+  // Wait for data from client to become available
+  if (_currentStatus == HC_WAIT_READ) {
+    if (!_currentClient.available()) {
+      if (millis() - _statusChange > HTTP_MAX_DATA_WAIT) {
+        _currentClient = WiFiClient();
+        _currentStatus = HC_NONE;
+      }
+      yield();
+      return;
+    }
+
+    if (!_parseRequest(_currentClient)) {
+      _currentClient = WiFiClient();
+      _currentStatus = HC_NONE;
+      return;
+    }
+
+    _contentLength = CONTENT_LENGTH_NOT_SET;
+    _handleRequest();
+
+    if (!_currentClient.connected()) {
+      _currentClient = WiFiClient();
+      _currentStatus = HC_NONE;
+      return;
+    } else {
+      _currentStatus = HC_WAIT_CLOSE;
+      _statusChange = millis();
+      return;
+    }
+  }
+
+  if (_currentStatus == HC_WAIT_CLOSE) {
+    if (millis() - _statusChange > HTTP_MAX_CLOSE_WAIT) {
+      _currentClient = WiFiClient();
+      _currentStatus = HC_NONE;
+    } else {
+      yield();
+      return;
+    }
+  }
 }
 
 void ESP8266WebServer::close() {
@@ -208,11 +253,10 @@ void ESP8266WebServer::_prepareHeader(String& response, int code, const char* co
         content_type = "text/html";
 
     sendHeader("Content-Type", content_type, true);
-    if (_contentLength != CONTENT_LENGTH_UNKNOWN && _contentLength != CONTENT_LENGTH_NOT_SET) {
-        sendHeader("Content-Length", String(_contentLength));
-    }
-    else if (contentLength > 0){
+    if (_contentLength == CONTENT_LENGTH_NOT_SET) {
         sendHeader("Content-Length", String(contentLength));
+    } else if (_contentLength != CONTENT_LENGTH_UNKNOWN) {
+        sendHeader("Content-Length", String(_contentLength));
     }
     sendHeader("Connection", "close");
     sendHeader("Access-Control-Allow-Origin", "*");
@@ -416,13 +460,13 @@ void ESP8266WebServer::onNotFound(THandlerFunction fn) {
 void ESP8266WebServer::_handleRequest() {
   bool handled = false;
   if (!_currentHandler){
-#ifdef DEBUG
+#ifdef DEBUG_ESP_HTTP_SERVER
     DEBUG_OUTPUT.println("request handler not found");
 #endif
   }
   else {
     handled = _currentHandler->handle(*this, _currentMethod, _currentUri);
-#ifdef DEBUG
+#ifdef DEBUG_ESP_HTTP_SERVER
     if (!handled) {
       DEBUG_OUTPUT.println("request handler failed to handle request");
     }
@@ -438,12 +482,7 @@ void ESP8266WebServer::_handleRequest() {
     }
   }
 
-  uint16_t maxWait = HTTP_MAX_CLOSE_WAIT;
-  while(_currentClient.connected() && maxWait--) {
-    delay(1);
-  }
-  _currentClient   = WiFiClient();
-  _currentUri      = String();
+  _currentUri = String();
 }
 
 const char* ESP8266WebServer::_responseCodeToString(int code) {
